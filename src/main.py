@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.preprocesing.corpus import CorpusBuilder, CorpusCleaner, CorpusCzechLemmatizer, load_stopwords
+from src.preprocesing.corpus import CorpusBuilder, CorpusCleaner, CorpusLemmatizerBuilder
 from src.preprocesing.embeddings import EmbeddingStorage, EmbeddingPipeline
 from src.preprocesing.models import ModelManager
 from src.clustering.models import HDBSCANClusteringModel
@@ -66,15 +66,16 @@ def main():
     )
     cb.save(PATH_TO_CORPUS)
 
-    stopwords = load_stopwords(PATH_TO_STOPWORDS)
-
     cleaner = CorpusCleaner()
     cleaned_corpus = cleaner.clean(cb.corpus['corpus'])
 
-    mm = ModelManager(UDPIPE_MODEL_NAME)
-    udpipe_model = mm.load_udpipe_model(MODEL_DIR)
-    lemmatizer = CorpusCzechLemmatizer(udpipe_model)
-    lemmatized_corpus = lemmatizer.lemmatize(cleaned_corpus, stopwords)
+    lemmatizer = CorpusLemmatizerBuilder(
+        model_dir=MODEL_DIR,
+        model_name=UDPIPE_MODEL_NAME,
+        stopwords_path=PATH_TO_STOPWORDS
+    ).build()
+
+    lemmatized_corpus = lemmatizer.process(cleaned_corpus)
 
     if LOAD_EMBEDDINGS:
         embedd_storage = EmbeddingStorage()
