@@ -1,5 +1,6 @@
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
+from corpy.udpipe import Model as UDPipeModel
 
 import pickle
 from typing import Union
@@ -34,8 +35,13 @@ class ModelManager:
             except Exception as e:
                 raise ValueError(f'SentenceTransformer model {self.model_name} could not be loaded from HuggingFace.') from e
 
-    def load_udpipe_model(self):
-        pass
+    def load_udpipe_model(self, model_dir: Union[Path, str]) -> UDPipeModel:
+        file_path = Path(model_dir) / f'{self.short_model_name}'
+        if file_path.exists():
+            self.model = UDPipeModel(file_path)
+            return self.model
+        else:
+            raise FileNotFoundError(f'UDPipe model was not found at location: {file_path}')
 
     def save(self, model_dir: Union[Path, str]):
         if self.model is None:
