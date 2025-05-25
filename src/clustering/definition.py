@@ -1,12 +1,18 @@
+import os
+import json
+
 import numpy as np
 import pandas as pd
 
 from sklearn.feature_extraction.text import TfidfVectorizer
+from openai import OpenAI
 
-from typing import List, Tuple, Dict
+import random
+
+from typing import List, Tuple, Dict, Optional, Union
 
 
-class ClusterDefinition:
+class ClusterKeywords:
     def __init__(self):
         self.tfidf = None
         self.tfidf_matrix = np.ndarray([])
@@ -40,7 +46,7 @@ class ClusterDefinition:
         self.cluster_kw = cluster_kw
         return self.cluster_kw
 
-    def get_clusters_definition_df(self) -> pd.DataFrame:
+    def get_clusters_keywords_df(self) -> pd.DataFrame:
         if self.cluster_kw is None:
             raise ValueError('Cluster keywords dict is empty. Extract cluster keywords first.')
 
@@ -56,3 +62,82 @@ class ClusterDefinition:
         })
 
 
+class ClusterOAIDefinition:
+    def __init__(self, api_key: Optional[str] = None):
+        self.client = self._get_openai_client(api_key)
+        self.clusters_definition = {}
+
+    @staticmethod
+    def _get_openai_client(api_key: Optional[str] = None):
+        if api_key:
+            return OpenAI(api_key=api_key)
+        else:
+            from dotenv import load_dotenv
+            load_dotenv()
+            return OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+
+    def get_clusters_definition(
+            self
+            , clusters_keywords: Dict[any, List[str]]
+            , labels: np.ndarray
+            , documents: Union[pd.Series, List[str]]
+            ) -> Dict[any, Dict[str, str]]:
+
+        clusters_definition = {}
+        for cluster, kw in clusters_keywords.items():
+            idxs = np.where(labels == cluster)[0]
+            examples = self._get_examples(documents[idxs])
+            response = self._get_definition(kw, examples)
+            clusters_definition[cluster] = self._parse_response(response)
+        self.clusters_definition = clusters_definition
+        return self.clusters_definition
+
+    def get_clusters_definition_df(self) -> pd.DataFrame:
+        if self.clusters_definition is None:
+            raise ValueError('Cluster definition dict is empty. Extract cluster definition first.')
+
+        df = pd.DataFrame.from_dict(self.clusters_definition, orient='index').reset_index()
+        df.columns = ['cluster_id', 'name', 'definition']
+        return df
+
+    def _get_definition(self, keywords: List[str], examples: List[str]):
+        prompt = f'''
+        Vytvoř krátký název a definici (2-3 věty) klastrů výzkumných projektů na základě násldujcích klíčových slov 
+        a příkladů projektů.
+        Klíčová slova: {' '.join(keywords)}
+        Příklady projetků: {'\n'.join(examples)}
+        
+        Vrať výstup v následujícím JSON formátu.
+        {{"name": ".....", "definition": "....."}}
+        '''
+
+        response = self.client.responses.create(
+            model='gpt-4o-mini',
+            input=[
+                {
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': prompt}
+                    ]
+                }
+            ],
+            temperature=0.2
+        )
+
+        return response
+
+    @staticmethod
+    def _get_examples(documents: Union[pd.Series, List[str]], n_examples: int = 3) -> List[str]:
+        if isinstance(documents, pd.Series):
+            documents = documents.tolist()
+        return random.sample(documents, n_examples)
+
+    @staticmethod
+    def _parse_response(response) -> Dict[str, str]:
+        raw_text = response.output[0].content[0].text
+
+        if raw_text.startswith("```json"):
+            raw_text = raw_text.strip("``` \n")
+            raw_text = raw_text.replace("```", "").replace("json", "").strip()
+
+        return json.loads(raw_text)
