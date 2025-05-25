@@ -1,30 +1,17 @@
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
-
-from sklearn.feature_extraction.text import CountVectorizer
-from corpy.udpipe import Model as UDPipeModel
 
 import re
 import string
 
 from tqdm import tqdm
 
-from typing import List, Union, Optional
+from src.preprocesing.text import Lemmatizer, FeatureExtractor, Tokenizer
+from src.preprocesing.text import CzechLemmatizer, CVFeatureExtractor, CVTokenizer, JSONStopwordsLoader
+from src.preprocesing.models import ModelManager
 
-
-def load_stopwords(file_path: Union[Path, str], custom_stopwords: Optional[List[str]] = None) -> List[str]:
-    file_path = Path(file_path)
-    if file_path.exists():
-        stopwords_df = pd.read_json(file_path)
-        stopwords = stopwords_df[stopwords_df.columns[0]].tolist()
-    else:
-        raise FileNotFoundError(f'Stopwords file not found at location: from {file_path}')
-
-    if custom_stopwords:
-        stopwords.extend(custom_stopwords)
-    return stopwords
+from typing import List, Union, Optional, Dict
 
 
 class CorpusBuilder:
@@ -95,44 +82,51 @@ class CorpusCleaner:
         return document
 
 
-class CorpusCzechLemmatizer:
-    def __init__(self, model: UDPipeModel):
-        self.model = model
-        self.features = np.array([], dtype=str)
-        self.features_lemmatized_dict = {}
+class CorpusLemmatizer:
+    def __init__(self, lemmatizer: Lemmatizer, feature_extractor: FeatureExtractor, tokenizer: Tokenizer):
+        self.lemmatizer = lemmatizer
+        self.feature_extractor = feature_extractor
+        self.tokenizer = tokenizer
+        self.features: List[str] = []
+        self.features_lemma_dict: Dict[str, str] = {}
 
-    def lemmatize(self, corpus: List[str], stopwords: List[str]):
-        self._get_corpus_features(corpus, stopwords)
+    def process(self, corpus: List[str]):
+        self.features = self.feature_extractor.extract_features(corpus)
         self._feature_lemmatize()
         return [self._document_lemmatize(doc) for doc in corpus]
-
-    def _get_corpus_features(self, corpus: List[str], stopwords: List[str]):
-        cv = CountVectorizer(min_df=1, stop_words=stopwords)
-        cv.fit_transform(corpus)
-        self.features = cv.get_feature_names_out()
-        return self.features
-
-    def _text_lemmatize(self, text: str) -> str:
-        sentence = []
-        for s in self.model.process(text):
-            for w in s.words:
-                if '<root>' not in w.lemma:
-                    sentence.append(w.lemma)
-        return ' '.join(sentence)
 
     def _feature_lemmatize(self):
         features_lemmatized = []
         for f in tqdm(self.features):
-            features_lemmatized.append(self._text_lemmatize(f))
+            features_lemmatized.append(self.lemmatizer.lemmatize(f))
         self.features_lemmatized_dict = dict(zip(self.features, features_lemmatized))
         return self.features_lemmatized_dict
 
     def _document_lemmatize(self, document: str) -> str:
-        tokens = document.split(' ')
+        tokens = self.tokenizer.tokenize(document)
         tokens_lemmatized = [
             lemma
             for token in tokens
             if self.features_lemmatized_dict.get(token)
-            for lemma in self.features_lemmatized_dict[token].split(' ')
+            for lemma in self.tokenizer.tokenize(self.features_lemmatized_dict[token])
         ]
         return ' '.join(tokens_lemmatized)
+
+
+class CorpusLemmatizerBuilder:
+    def __init__(self, model_dir: Union[Path, str], model_name: str, stopwords_path: Union[Path, str]):
+        self.model_dir = model_dir
+        self.model_name = model_name
+        self.stopwords_path = stopwords_path
+
+    def build(self) -> CorpusLemmatizer:
+        model = ModelManager(self.model_name).load_udpipe_model(self.model_dir)
+        stopwords = JSONStopwordsLoader().load(self.stopwords_path)
+        cz_lemmatizer = CzechLemmatizer(model)
+        cv_extractor = CVFeatureExtractor(stopwords)
+        cv_tokenizer = CVTokenizer()
+        return CorpusLemmatizer(
+            lemmatizer=cz_lemmatizer,
+            feature_extractor=cv_extractor,
+            tokenizer=cv_tokenizer
+        )
