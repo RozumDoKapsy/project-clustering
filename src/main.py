@@ -1,9 +1,11 @@
 from pathlib import Path
 
-from src.preprocesing.corpus import CorpusBuilder
+from src.preprocesing.corpus import CorpusBuilder, CorpusCleaner, CorpusCzechLemmatizer, load_stopwords
 from src.preprocesing.embeddings import EmbeddingStorage, EmbeddingPipeline
+from src.preprocesing.models import ModelManager
 from src.clustering.models import HDBSCANClusteringModel
 from src.clustering.pipeline import ClusteringPipeline
+from src.clustering.definition import ClusterDefinition
 
 PROGRAMME_LIST = ['TK', 'TS']
 LANGUAGE = 'CZ'
@@ -17,15 +19,22 @@ CORPUS_FILE = 'corpus_projects.csv'
 PATH_TO_CORPUS = DATA_DIR / CORPUS_FILE
 
 MODEL_DIR = Path('../models')
-MODEL_NAME = 'sentence-transformers/paraphrase-multilingual-mpnet-base-v2'
-SHORT_MODEL_NAME = MODEL_NAME.split('/')[-1]
+SENTENCE_TRANSFORMER_MODEL_NAME = 'sentence-transformers/paraphrase-multilingual-mpnet-base-v2'
+SENTENCE_TRANSFORMER_SHORT_MODEL_NAME = SENTENCE_TRANSFORMER_MODEL_NAME.split('/')[-1]
+
+UDPIPE_MODEL_NAME = 'czech-pdt-ud-2.5-191206.udpipe'
 
 EMBEDDINGS_DIR = Path('../embeddings')
 EMBEDDINGS_FILE = f'projects'
-REDUCED_EMBEDDINGS_FILE = f'{EMBEDDINGS_DIR}/{EMBEDDINGS_FILE}_reduced_embeddings_{SHORT_MODEL_NAME}.pickle'
+REDUCED_EMBEDDINGS_FILE = f'{EMBEDDINGS_DIR}/{EMBEDDINGS_FILE}_reduced_embeddings_{SENTENCE_TRANSFORMER_SHORT_MODEL_NAME}.pickle'
 
 CLUSTERS_FILE = 'clusters_projects.xlsx'
 PATH_TO_CLUSTERS = DATA_DIR / CLUSTERS_FILE
+
+STOPWORDS_FILE = 'stopwords-cs.json'
+PATH_TO_STOPWORDS = DATA_DIR / STOPWORDS_FILE
+
+DEFINITION_FILE = 'clusters_definition.xlsx'
 
 UMAP_PARAMS = {
     'n_neighbors': 5,
@@ -55,12 +64,22 @@ def main():
     )
     cb.save(PATH_TO_CORPUS)
 
+    stopwords = load_stopwords(PATH_TO_STOPWORDS)
+
+    cleaner = CorpusCleaner()
+    cleaned_corpus = cleaner.clean(cb.corpus['corpus'])
+
+    mm = ModelManager(UDPIPE_MODEL_NAME)
+    udpipe_model = mm.load_udpipe_model(MODEL_DIR)
+    lemmatizer = CorpusCzechLemmatizer(udpipe_model)
+    lemmatized_corpus = lemmatizer.lemmatize(cleaned_corpus, stopwords)
+
     if LOAD_EMBEDDINGS:
         embedd_storage = EmbeddingStorage()
         reduced_embeddings = embedd_storage.load(REDUCED_EMBEDDINGS_FILE)
     else:
         embeddings_pipeline = EmbeddingPipeline(
-            model_name=MODEL_NAME,
+            model_name=SENTENCE_TRANSFORMER_MODEL_NAME,
             model_dir=MODEL_DIR
         )
         reduced_embeddings = embeddings_pipeline.run(
@@ -78,9 +97,25 @@ def main():
         save=True,
         file_path=PATH_TO_CLUSTERS
     )
-    print(pipeline.model.evaluation_results)
+
+    definition = ClusterDefinition()
+    definition.fit(
+        documents=lemmatized_corpus,
+        min_df=2,
+        ngram_range=(1, 2),
+        sublinear_tf=True,
+        norm='l1'
+    )
+    definition.extract_cluster_keywords(
+        labels=pipeline.model.labels,
+        topn=10
+    )
+    clusters_keywords = definition.get_clusters_definition_df()
+    clusters_keywords.to_excel(DATA_DIR / DEFINITION_FILE, index=False)
 
     # TODO: result = Clustering Metadata (metrics), Cluster information (silhouette score, definition), ClusteredDocuments)
+
+    print(pipeline.model.evaluation_results)
 
 
 if __name__ == '__main__':
