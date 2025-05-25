@@ -5,14 +5,15 @@ from src.preprocesing.embeddings import EmbeddingStorage, EmbeddingPipeline
 from src.preprocesing.models import ModelManager
 from src.clustering.models import HDBSCANClusteringModel
 from src.clustering.pipeline import ClusteringPipeline
-from src.clustering.definition import ClusterDefinition
+from src.clustering.definition import ClusterKeywords, ClusterOAIDefinition
 
 PROGRAMME_LIST = ['TK', 'TS']
 LANGUAGE = 'CZ'
 
 DATA_DIR = Path('../data/')
 # DATA_FILE = 'raw_projects.csv'
-DATA_FILE = 'TK_TS.xlsx'
+# DATA_FILE = 'TK_TS.xlsx'
+DATA_FILE = 'Projekty energetika zklastrované.xlsx'
 PATH_TO_DATA = DATA_DIR / DATA_FILE
 
 CORPUS_FILE = 'corpus_projects.csv'
@@ -34,6 +35,7 @@ PATH_TO_CLUSTERS = DATA_DIR / CLUSTERS_FILE
 STOPWORDS_FILE = 'stopwords-cs.json'
 PATH_TO_STOPWORDS = DATA_DIR / STOPWORDS_FILE
 
+KEYWORDS_FILE = 'clusters_keywords.xlsx'
 DEFINITION_FILE = 'clusters_definition.xlsx'
 
 UMAP_PARAMS = {
@@ -82,7 +84,7 @@ def main():
             model_name=SENTENCE_TRANSFORMER_MODEL_NAME,
             model_dir=MODEL_DIR
         )
-        reduced_embeddings = embeddings_pipeline.run(
+        embeddings, reduced_embeddings = embeddings_pipeline.run(
             documents=cb.corpus['corpus'],
             embeddings_dir=EMBEDDINGS_DIR,
             file_name=EMBEDDINGS_FILE,
@@ -98,7 +100,7 @@ def main():
         file_path=PATH_TO_CLUSTERS
     )
 
-    definition = ClusterDefinition()
+    definition = ClusterKeywords()
     definition.fit(
         documents=lemmatized_corpus,
         min_df=2,
@@ -110,8 +112,18 @@ def main():
         labels=pipeline.model.labels,
         topn=10
     )
-    clusters_keywords = definition.get_clusters_definition_df()
-    clusters_keywords.to_excel(DATA_DIR / DEFINITION_FILE, index=False)
+    clusters_keywords_df = definition.get_clusters_keywords_df()
+    clusters_keywords_df.to_excel(DATA_DIR / KEYWORDS_FILE, index=False)
+
+    oai_definition = ClusterOAIDefinition()
+    oai_definition.get_clusters_definition(
+        clusters_keywords=definition.cluster_kw,
+        labels=pipeline.model.labels,
+        documents=cb.corpus['corpus']
+    )
+
+    clusters_definition_df = oai_definition.get_clusters_definition_df()
+    clusters_definition_df.to_excel(DATA_DIR / DEFINITION_FILE, index=False)
 
     # TODO: result = Clustering Metadata (metrics), Cluster information (silhouette score, definition), ClusteredDocuments)
 
